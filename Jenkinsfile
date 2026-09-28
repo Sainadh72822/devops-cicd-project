@@ -30,6 +30,13 @@ stages {
             sh 'docker run -d --name devops-demo-container -p 5001:5000 devops-demo-app:jenkins'
         }
     }
+
+    stage('Health Check') {
+        steps {
+            sh 'sleep 5'
+            sh 'curl -f http://localhost:5001/health'
+        }
+    }
 }
 
 }
