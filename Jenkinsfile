@@ -37,6 +37,12 @@ stages {
             sh 'curl -f http://localhost:5001/health'
         }
     }
+
+    stage('Cleanup') {
+        steps {
+            sh 'docker rm -f devops-demo-container'
+        }
+    }
 }
 
 }
