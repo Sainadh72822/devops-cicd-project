@@ -23,6 +23,13 @@ stages {
             sh 'docker build -t devops-demo-app:jenkins .'
         }
     }
+
+    stage('Docker Run') {
+        steps {
+            sh 'docker rm -f devops-demo-container || true'
+            sh 'docker run -d --name devops-demo-container -p 5001:5000 devops-demo-app:jenkins'
+        }
+    }
 }
 
 }
