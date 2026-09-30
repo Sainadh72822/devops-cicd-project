@@ -54,7 +54,7 @@ pipeline {
 
         stage('Unit Tests') {
             steps {
-                sh 'pytest -v'
+                sh 'python3 -m venv .ci-venv && .ci-venv/bin/pip install --upgrade pip && .ci-venv/bin/pip install -r app/requirements.txt pytest && .ci-venv/bin/pytest -v'
             }
         }
 
