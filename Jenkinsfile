@@ -5,8 +5,10 @@ pipeline {
         AWS_REGION = 'us-east-1'
         ECR_REGISTRY = '044014415078.dkr.ecr.us-east-1.amazonaws.com'
         ECR_REPOSITORY = 'devops-demo-app'
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        IMAGE_URI = "${ECR_REGISTRY}/${ECR_REPOSITORY}:${BUILD_NUMBER}"
+        IMAGE_NAME = 'devops-demo-app'
+        SONAR_PROJECT_KEY = 'devops-demo-app'
+        K8S_NAMESPACE = 'devops'
+        K8S_DEPLOYMENT = 'devops-demo-app'
     }
 
     stages {
@@ -14,6 +16,22 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Detect GitOps Commit') {
+            steps {
+                script {
+                    def changedFiles = sh(
+                        script: "git diff-tree --no-commit-id --name-only -r HEAD",
+                        returnStdout: true
+                    ).trim().split('\n') as List
+
+                    if (changedFiles.size() == 1 && changedFiles[0] == 'k8s/deployment.yaml') {
+                        currentBuild.result = 'NOT_BUILT'
+                        error('GitOps manifest commit detected. Skipping CI pipeline.')
+                    }
+                }
             }
         }
 
@@ -25,70 +43,77 @@ pipeline {
             }
         }
 
-        stage('Terraform Init') {
-            steps {
-                dir('terraform') {
-                    sh 'terraform init -input=false'
-                }
-            }
-        }
-
         stage('Terraform Validate') {
             steps {
                 dir('terraform') {
+                    sh 'terraform init -input=false'
                     sh 'terraform validate'
                 }
             }
         }
 
-        stage('Terraform Plan') {
+        stage('Unit Tests') {
             steps {
-                dir('terraform') {
-                    sh 'terraform plan -input=false -out=tfplan'
+                sh 'pytest -v'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+
+                    withSonarQubeEnv('sonarqube') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                              -Dsonar.projectName='DevOps Demo App' \
+                              -Dsonar.sources=app \
+                              -Dsonar.tests=app/tests \
+                              -Dsonar.python.version=3.12 \
+                              -Dsonar.sourceEncoding=UTF-8
+                        """
+                    }
+
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
                 }
             }
         }
 
-        stage('Terraform Approval') {
+        stage('Generate Image Tag') {
             steps {
-                input message: 'Terraform plan reviewed. Approve infrastructure changes?', ok: 'Approve'
-            }
-        }
+                script {
+                    def shortSha = sh(
+                        script: 'git rev-parse --short=7 HEAD',
+                        returnStdout: true
+                    ).trim()
 
-        stage('Terraform Apply') {
-            steps {
-                dir('terraform') {
-                    sh 'terraform apply -input=false tfplan'
+                    env.IMAGE_TAG = "build-${env.BUILD_NUMBER}-${shortSha}"
+                    env.IMAGE_URI = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.IMAGE_TAG}"
+
+                    echo "Image tag: ${env.IMAGE_TAG}"
+                    echo "Image URI: ${env.IMAGE_URI}"
                 }
-            }
-        }
-
-        stage('Test') {
-            steps {
-                sh 'python3 -m venv .venv'
-                sh '.venv/bin/pip install -r app/requirements.txt'
-                sh '.venv/bin/pip install pytest'
-                sh '.venv/bin/python -m pytest app/tests'
             }
         }
 
         stage('Docker Build') {
             steps {
-                sh 'docker build -t devops-demo-app:${BUILD_NUMBER} .'
+                sh 'docker build -t ${IMAGE_URI} .'
             }
         }
 
-        stage('Docker Run') {
+        stage('Trivy Security Scan') {
             steps {
-                sh 'docker rm -f devops-demo-container || true'
-                sh 'docker run -d --name devops-demo-container -p 5001:5000 devops-demo-app:${BUILD_NUMBER}'
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh 'sleep 5'
-                sh 'curl -f http://localhost:5001/health'
+                sh '''
+                    trivy image \
+                      --severity CRITICAL \
+                      --ignore-unfixed \
+                      --exit-code 1 \
+                      ${IMAGE_URI}
+                '''
             }
         }
 
@@ -101,26 +126,101 @@ pipeline {
             }
         }
 
-        stage('Docker Tag') {
-            steps {
-                sh '''
-                    docker tag devops-demo-app:${BUILD_NUMBER} \
-                    ${IMAGE_URI}
-                '''
-            }
-        }
-
-        stage('Push to ECR') {
+        stage('Push Image to ECR') {
             steps {
                 sh 'docker push ${IMAGE_URI}'
             }
         }
 
-        stage('Cleanup') {
+        stage('Update Kubernetes Manifest') {
             steps {
-                sh 'docker rm -f devops-demo-container || true'
-                sh 'docker image rm ${IMAGE_URI} || true'
+                sh '''
+                    sed -i -E \
+                      "s#(image: .*/devops-demo-app:).*#\\1${IMAGE_TAG}#" \
+                      k8s/deployment.yaml
+
+                    grep 'image:' k8s/deployment.yaml
+                '''
             }
+        }
+
+        stage('Commit and Push GitOps Change') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-credentials',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        git config user.name "Jenkins CI"
+                        git config user.email "jenkins@localhost"
+
+                        git add k8s/deployment.yaml
+
+                        git commit \
+                          -m "[skip ci] Update application image to ${IMAGE_TAG}"
+
+                        git -c credential.helper='!f() { echo username="$GIT_USERNAME"; echo password="$GIT_PASSWORD"; }; f' \
+                          push origin HEAD:main
+                    '''
+                }
+            }
+        }
+
+        stage('Wait for Argo CD Deployment') {
+            steps {
+                sh '''
+                    echo "Waiting for Argo CD to deploy ${IMAGE_TAG}..."
+
+                    kubectl rollout status \
+                      deployment/${K8S_DEPLOYMENT} \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=5m
+                '''
+            }
+        }
+
+        stage('Application Health Check') {
+            steps {
+                sh '''
+                    kubectl get pods -n ${K8S_NAMESPACE} -l app=${IMAGE_NAME}
+
+                    kubectl rollout status \
+                      deployment/${K8S_DEPLOYMENT} \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=2m
+
+                    SERVICE_URL=$(kubectl get svc \
+                      -n ${K8S_NAMESPACE} \
+                      devops-demo-service \
+                      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+                    echo "Load Balancer: ${SERVICE_URL}"
+
+                    test -n "${SERVICE_URL}"
+
+                    curl -f \
+                      --retry 10 \
+                      --retry-delay 5 \
+                      "http://${SERVICE_URL}/health"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker image prune -f || true'
+        }
+
+        success {
+            echo 'CI/CD pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'CI/CD pipeline failed. Deployment will not be considered successful.'
         }
     }
 }
