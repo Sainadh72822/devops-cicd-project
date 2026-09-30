@@ -22,14 +22,10 @@ pipeline {
         stage('Detect GitOps Commit') {
             steps {
                 script {
-                    def changedFiles = sh(
-                        script: "git diff-tree --no-commit-id --name-only -r HEAD",
-                        returnStdout: true
-                    ).trim().split('\n') as List
-
-                    if (changedFiles.size() == 1 && changedFiles[0] == 'k8s/deployment.yaml') {
+                    def commitMessage = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    if (commitMessage.startsWith('[skip ci] Update application image to ')) {
                         currentBuild.result = 'NOT_BUILT'
-                        error('GitOps manifest commit detected. Skipping CI pipeline.')
+                        error('Jenkins GitOps commit detected. Skipping CI pipeline.')
                     }
                 }
             }
