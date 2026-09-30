@@ -1,6 +1,19 @@
 pipeline {
     agent any
 
+    options {
+        // Keep only recent Jenkins build records/artifacts
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '10',
+                artifactNumToKeepStr: '5'
+            )
+        )
+
+        // Prevent overlapping builds of this pipeline
+        disableConcurrentBuilds()
+    }
+
     environment {
         AWS_REGION = 'us-east-1'
         ECR_REGISTRY = '044014415078.dkr.ecr.us-east-1.amazonaws.com'
@@ -22,7 +35,11 @@ pipeline {
         stage('Detect GitOps Commit') {
             steps {
                 script {
-                    def commitMessage = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    def commitMessage = sh(
+                        script: 'git log -1 --pretty=%B',
+                        returnStdout: true
+                    ).trim()
+
                     if (commitMessage.startsWith('[skip ci] Update application image to ')) {
                         currentBuild.result = 'NOT_BUILT'
                         error('Jenkins GitOps commit detected. Skipping CI pipeline.')
@@ -50,7 +67,12 @@ pipeline {
 
         stage('Unit Tests') {
             steps {
-                sh 'python3 -m venv .ci-venv && .ci-venv/bin/pip install --upgrade pip && .ci-venv/bin/pip install -r app/requirements.txt pytest && .ci-venv/bin/pytest -v'
+                sh '''
+                    python3 -m venv .ci-venv
+                    .ci-venv/bin/pip install --upgrade pip
+                    .ci-venv/bin/pip install -r app/requirements.txt pytest
+                    .ci-venv/bin/pytest -v
+                '''
             }
         }
 
@@ -60,20 +82,28 @@ pipeline {
                     def scannerHome = tool 'sonar-scanner'
 
                     withSonarQubeEnv('sonarqube') {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                              -Dsonar.projectName='DevOps Demo App' \
-                              -Dsonar.sources=app \
-                              -Dsonar.tests=app/tests \
-                              -Dsonar.exclusions=app/tests/** \
-                              -Dsonar.python.version=3.12 \
-                              -Dsonar.sourceEncoding=UTF-8
-                        """
-                    }
+                        withCredentials([
+                            string(
+                                credentialsId: 'sonarqube-token',
+                                variable: 'SONAR_TOKEN'
+                            )
+                        ]) {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                  -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                  -Dsonar.projectName='DevOps Demo App' \
+                                  -Dsonar.sources=app \
+                                  -Dsonar.tests=app/tests \
+                                  -Dsonar.exclusions=app/tests/** \
+                                  -Dsonar.python.version=3.12 \
+                                  -Dsonar.sourceEncoding=UTF-8 \
+                                  -Dsonar.token=\\\${SONAR_TOKEN}
+                            """
+                        }
 
-                    timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
                     }
                 }
             }
@@ -209,7 +239,11 @@ pipeline {
 
     post {
         always {
-            sh 'docker image prune -f || true'
+            echo 'Cleaning unused Docker resources...'
+
+            sh '''
+                docker system prune -af || true
+            '''
         }
 
         success {
