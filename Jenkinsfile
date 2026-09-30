@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     options {
-        // Keep only recent Jenkins build records/artifacts
         buildDiscarder(
             logRotator(
                 numToKeepStr: '10',
@@ -10,7 +9,6 @@ pipeline {
             )
         )
 
-        // Prevent overlapping builds of this pipeline
         disableConcurrentBuilds()
     }
 
@@ -88,17 +86,17 @@ pipeline {
                                 variable: 'SONAR_TOKEN'
                             )
                         ]) {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                  -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                  -Dsonar.projectName='DevOps Demo App' \
+                            sh '''
+                                "$SONAR_SCANNER_HOME/bin/sonar-scanner" \
+                                  -Dsonar.projectKey=devops-demo-app \
+                                  -Dsonar.projectName="DevOps Demo App" \
                                   -Dsonar.sources=app \
                                   -Dsonar.tests=app/tests \
                                   -Dsonar.exclusions=app/tests/** \
                                   -Dsonar.python.version=3.12 \
                                   -Dsonar.sourceEncoding=UTF-8 \
-                                  -Dsonar.token=\\\${SONAR_TOKEN}
-                            """
+                                  -Dsonar.token="$SONAR_TOKEN"
+                            '''
                         }
 
                         timeout(time: 5, unit: 'MINUTES') {
