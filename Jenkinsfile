@@ -70,6 +70,7 @@ pipeline {
                               -Dsonar.projectName='DevOps Demo App' \
                               -Dsonar.sources=app \
                               -Dsonar.tests=app/tests \
+                              -Dsonar.exclusions=app/tests/** \
                               -Dsonar.python.version=3.12 \
                               -Dsonar.sourceEncoding=UTF-8
                         """
