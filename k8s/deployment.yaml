@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: devops-demo-app
-          image: 044014415078.dkr.ecr.us-east-1.amazonaws.com/devops-demo-app:build-39-c6e3786
+          image: 044014415078.dkr.ecr.us-east-1.amazonaws.com/devops-demo-app:build-40-2c373a4
           ports:
             - containerPort: 5000
           resources:
