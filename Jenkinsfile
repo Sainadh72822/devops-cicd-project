@@ -19,6 +19,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'devops-demo-app'
         K8S_NAMESPACE = 'devops'
         K8S_DEPLOYMENT = 'devops-demo-app'
+        SKIP_CI = 'false'
     }
 
     stages {
@@ -45,14 +46,20 @@ pipeline {
                     echo "Build commit message: ${commitMessage}"
 
                     if (commitMessage.startsWith('[skip ci] Update application image to ')) {
+                        env.SKIP_CI = 'true'
                         currentBuild.result = 'NOT_BUILT'
-                        error('Jenkins GitOps commit detected. Skipping CI pipeline.')
+                        echo 'Jenkins GitOps commit detected. Skipping CI/CD stages.'
                     }
                 }
             }
         }
 
         stage('Terraform Format Check') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 dir('terraform') {
                     sh 'terraform fmt -check'
@@ -61,6 +68,11 @@ pipeline {
         }
 
         stage('Terraform Validate') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 dir('terraform') {
                     sh 'terraform init -input=false'
@@ -70,6 +82,11 @@ pipeline {
         }
 
         stage('Unit Tests') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     python3 -m venv .ci-venv
@@ -81,6 +98,11 @@ pipeline {
         }
 
         stage('SonarQube Analysis') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 script {
                     def scannerHome = tool 'sonar-scanner'
@@ -116,6 +138,11 @@ pipeline {
         }
 
         stage('Generate Image Tag') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 script {
                     def shortSha = sh(
@@ -133,12 +160,22 @@ pipeline {
         }
 
         stage('Docker Build') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh 'docker build -t ${IMAGE_URI} .'
             }
         }
 
         stage('Trivy Security Scan') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     trivy image \
@@ -151,6 +188,11 @@ pipeline {
         }
 
         stage('ECR Login') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     aws ecr get-login-password --region ${AWS_REGION} |
@@ -160,12 +202,22 @@ pipeline {
         }
 
         stage('Push Image to ECR') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh 'docker push ${IMAGE_URI}'
             }
         }
 
         stage('Update Kubernetes Manifest') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     sed -i -E \
@@ -178,6 +230,11 @@ pipeline {
         }
 
         stage('Commit and Push GitOps Change') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -203,6 +260,11 @@ pipeline {
         }
 
         stage('Wait for Argo CD Deployment') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     echo "Waiting for Argo CD to deploy ${IMAGE_TAG}..."
@@ -216,6 +278,11 @@ pipeline {
         }
 
         stage('Application Health Check') {
+            when {
+                expression {
+                    env.SKIP_CI != 'true'
+                }
+            }
             steps {
                 sh '''
                     kubectl get pods -n ${K8S_NAMESPACE} -l app=${IMAGE_NAME}
