@@ -8,7 +8,6 @@ pipeline {
                 artifactNumToKeepStr: '5'
             )
         )
-
         disableConcurrentBuilds()
     }
 
@@ -23,7 +22,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -86,17 +84,19 @@ pipeline {
                                 variable: 'SONAR_TOKEN'
                             )
                         ]) {
-                            sh '''
-                                "$SONAR_SCANNER_HOME/bin/sonar-scanner" \
-                                  -Dsonar.projectKey=devops-demo-app \
-                                  -Dsonar.projectName="DevOps Demo App" \
-                                  -Dsonar.sources=app \
-                                  -Dsonar.tests=app/tests \
-                                  -Dsonar.exclusions=app/tests/** \
-                                  -Dsonar.python.version=3.12 \
-                                  -Dsonar.sourceEncoding=UTF-8 \
-                                  -Dsonar.token="$SONAR_TOKEN"
-                            '''
+                            withEnv(["SCANNER_HOME=${scannerHome}"]) {
+                                sh '''
+                                    "$SCANNER_HOME/bin/sonar-scanner" \
+                                      -Dsonar.projectKey=devops-demo-app \
+                                      -Dsonar.projectName="DevOps Demo App" \
+                                      -Dsonar.sources=app \
+                                      -Dsonar.tests=app/tests \
+                                      -Dsonar.exclusions=app/tests/** \
+                                      -Dsonar.python.version=3.12 \
+                                      -Dsonar.sourceEncoding=UTF-8 \
+                                      -Dsonar.token="$SONAR_TOKEN"
+                                '''
+                            }
                         }
 
                         timeout(time: 5, unit: 'MINUTES') {
