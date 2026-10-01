@@ -31,10 +31,18 @@ pipeline {
         stage('Detect GitOps Commit') {
             steps {
                 script {
-                    def commitMessage = sh(
-                        script: 'git log -1 --pretty=%B',
+                    def buildCommit = sh(
+                        script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
+
+                    def commitMessage = sh(
+                        script: "git log -1 --pretty=%B ${buildCommit}",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Build commit: ${buildCommit}"
+                    echo "Build commit message: ${commitMessage}"
 
                     if (commitMessage.startsWith('[skip ci] Update application image to ')) {
                         currentBuild.result = 'NOT_BUILT'
